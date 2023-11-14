@@ -28,7 +28,22 @@ type table struct {
 	Name    string
 	Include map[string]bool
 	Columns []Column
+	oldVals []string
+	newVals []string
+	method  string
 	t       MyRdbIfce
+}
+
+func (t *table) check() bool {
+	switch t.method {
+	case "UPDATE":
+		return len(t.oldVals) == len(t.Columns) && len(t.newVals) == len(t.Columns)
+	case "DELETE":
+		return len(t.oldVals) == len(t.Columns)
+	case "INSERT":
+		return len(t.newVals) == len(t.Columns)
+	}
+	return false
 }
 
 func (t *table) getKey(vals []string) string {
@@ -66,27 +81,23 @@ func (t *table) manageIX(rdb redis.Pipeliner, key string, m map[string]string, d
 	return nil
 }
 
-func (t *table) update(rdb redis.Pipeliner, new, old []string) (err error) {
-	err = t.del(rdb, old)
+func (t *table) update(rdb redis.Pipeliner) (err error) {
+	err = t.del(rdb)
 	if err != nil {
 		return err
 	}
-	return t.hset(rdb, new)
+	return t.hset(rdb)
 }
 
-func (t *table) hset(rdb redis.Pipeliner, vals []string) error {
-	if len(t.Columns) != len(vals) {
-		return fmt.Errorf("hset table err: %s.%s len cols %d, len vals %d",
-			t.Schema, t.Name, len(t.Columns), len(vals))
-	}
+func (t *table) hset(rdb redis.Pipeliner) error {
 	var args = make(map[string]string)
-	for i := 0; i < len(vals); i++ {
-		if t.Columns[i].dummy || vals[i] == "" {
+	for i := 0; i < len(t.newVals); i++ {
+		if t.Columns[i].dummy || t.newVals[i] == "" {
 			continue
 		}
-		args[t.Columns[i].Name] = vals[i]
+		args[t.Columns[i].Name] = t.newVals[i]
 	}
-	var key = t.getKey(vals)
+	var key = t.getKey(t.newVals)
 	err := rdb.HSet(ctx, key, args).Err()
 	if err != nil {
 		return err
@@ -94,18 +105,18 @@ func (t *table) hset(rdb redis.Pipeliner, vals []string) error {
 	return t.manageIX(rdb, key, args, false)
 }
 
-func (t *table) del(rdb redis.Pipeliner, vals []string) error {
-	var key = t.getKey(vals)
-	err := rdb.Del(ctx, t.getKey(vals)).Err()
+func (t *table) del(rdb redis.Pipeliner) error {
+	var key = t.getKey(t.oldVals)
+	err := rdb.Del(ctx, t.getKey(t.oldVals)).Err()
 	if err != nil {
 		return err
 	}
 	var args = make(map[string]string)
-	for i := 0; i < len(vals); i++ {
-		if t.Columns[i].dummy || vals[i] == "" {
+	for i := 0; i < len(t.oldVals); i++ {
+		if t.Columns[i].dummy || t.oldVals[i] == "" {
 			continue
 		}
-		args[t.Columns[i].Name] = vals[i]
+		args[t.Columns[i].Name] = t.oldVals[i]
 	}
 	return t.manageIX(rdb, key, args, true)
 }
@@ -188,6 +199,7 @@ func (s *Stream) AddTable(name string, t MyRdbIfce) error {
 }
 
 func NewStream(c *Config) (*Stream, error) {
+	// check  mysqlbinlog app
 	var s Stream
 	s.conf = c
 	if c.Rdb == nil {

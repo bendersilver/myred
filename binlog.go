@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/bendersilver/jlog"
@@ -57,6 +56,7 @@ func (s *Stream) Close() error {
 }
 
 func (s *Stream) run() (err error) {
+	jlog.Debug(s.pos)
 	args := []string{
 		"--stop-never",
 		"--read-from-remote-server",
@@ -67,9 +67,10 @@ func (s *Stream) run() (err error) {
 		"--database=" + s.conf.Database,
 		"--base64-output=DECODE-ROWS",
 		"--verbose",
+		"--skip-gtids",
 		// "--to-last-log",
-		// "--start-position=4392730",
-		"--start-position=" + fmt.Sprint(s.pos.Pos),
+		"--start-position=4392730",
+		// "--start-position=" + fmt.Sprint(s.pos.Pos),
 		"--force-read",
 		s.pos.Name,
 	}
@@ -79,18 +80,19 @@ func (s *Stream) run() (err error) {
 	if err != nil {
 		jlog.Fatal(err)
 	}
+	defer stderr.Close()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		jlog.Fatal(err)
 	}
-
+	defer stdout.Close()
 	cmd.Start()
 	g := new(errgroup.Group)
 	g.Go(func() error {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			m := scanner.Text()
-			if strings.Contains(m, "[ERROR]") {
+			if strings.HasPrefix(m, "ERROR: ") {
 				return fmt.Errorf(m)
 			}
 
@@ -98,104 +100,92 @@ func (s *Stream) run() (err error) {
 		return nil
 	})
 	g.Go(func() error {
-		re := regexp.MustCompile(`#\d+ .* end_log_pos (\d+) CRC32`)
-		reTable := regexp.MustCompile("^### ([A-Z]+)[A-Z ]+`[a-z]+`.`([a-z]+)`")
+		reAt := regexp.MustCompile(`^# at (\d+)$`)
+		reTable := regexp.MustCompile("^### ([A-Z]+)[A-Z ]+`.+`.`(.+)`$")
 		reVal := regexp.MustCompile(`^###   @\d+=(.*)`)
 		scanner := bufio.NewScanner(stdout)
-		var start bool
-		var active, method, table string
-		var new, old []string
+
+		var item dbItem
+
 		for scanner.Scan() {
 			m := scanner.Text()
-			// #700101  5:00:00 server id 1  end_log_pos 0  Rotate to binlog.000032  pos: 4397395
-			if strings.HasPrefix(m, "ALTER TABLE") ||
-				strings.HasPrefix(m, "CREATE TABLE") ||
-				strings.HasPrefix(m, "DROP TABLE") ||
-				strings.HasPrefix(m, "TRUNCATE") { // start action
-				start = true
-			}
-			if start && strings.HasPrefix(m, "/*!*/;") { // end action
-				start = false
+			jlog.Debug(m)
+
+			args = reAt.FindStringSubmatch(m)
+			if len(args) == 2 { // execute
+				item.position = args[1]
+				item.set()
+				continue
 			}
 
-			if m == "COMMIT/*!*/;" {
-				method, table = "", ""
+			// only UPDATE, DELETE, INSERT
+			if !strings.HasPrefix(m, "### ") {
+				continue
 			}
 
-			args := reTable.FindStringSubmatch(m)
+			args = reTable.FindStringSubmatch(m)
 			if len(args) == 3 {
-				if method != "" && s.tables[table] != nil {
-					s.tables[table].Lock()
-					tx := s.rdb.TxPipeline()
-					switch method {
-					case "UPDATE":
-						jlog.Debug(table, new, old)
-						err = s.tables[table].update(tx, new, old)
-
-					case "DELETE":
-						err = s.tables[table].del(tx, old)
-
-					case "INSERT":
-						err = s.tables[table].hset(tx, new)
-
-					}
-					if err != nil {
-						return err
-					}
-					_, err = tx.Exec(ctx)
-					if err != nil {
-						return err
-					}
-					s.tables[table].Unlock()
-				}
-				method, table = args[1], args[2]
-				continue
+				item.set()
+				item.table = args[2]
 			}
-			if m == "### WHERE" || m == "### SET" {
-				active = strings.Trim(m, "# ")
-				old, new = nil, nil
-				continue
+			switch m {
+			case "### SET", "### WHERE":
+				item.set()
+				item.method = strings.Trim(m, "# ")
 			}
+
 			args = reVal.FindStringSubmatch(m)
 			if len(args) == 2 {
-				vals, err := parseValues(args[1])
+				v, err := parseValues(args[1])
 				if err != nil {
 					return err
 				}
-				switch active {
-				case "WHERE":
-					old = append(old, vals...)
-				case "SET":
-					new = append(new, vals...)
-				}
-				continue
-			}
+				item.vals = append(item.vals, v...)
 
-			// if start || begin {
-			// 	jlog.Debug(m)
-			// 	continue
-			// }
-			args = re.FindStringSubmatch(m)
-			if len(args) == 2 {
-				s.pos.Pos, err = strconv.ParseUint(args[1], 10, 64)
-				if err != nil {
-					return fmt.Errorf("parse pos err: %v", err)
-				}
-				if s.pos.Pos == 0 {
-					continue
-				}
-				err = s.dumpPos()
-				if err != nil {
-					return err
-				}
 			}
-			// if strings.HasPrefix(m, "### ") {
-			jlog.Infof("%s", m)
-			// }
 
 		}
 		return nil
 	})
 	cmd.Wait()
 	return g.Wait()
+}
+
+type dbItem struct {
+	table    string
+	method   string
+	vals     []string
+	position string
+}
+
+func (di *dbItem) set() error {
+	if di.vals != nil {
+		jlog.Debug(di.method, di.table, di.vals)
+	}
+	di.vals = nil
+	return nil
+}
+
+func (s *Stream) write(tb *table) (err error) {
+	tb.Lock()
+	defer tb.Unlock()
+	jlog.Notice(tb)
+	tx := s.rdb.TxPipeline()
+	switch tb.method {
+	case "UPDATE":
+		err = tb.update(tx)
+
+	case "DELETE":
+		err = tb.del(tx)
+
+	case "INSERT":
+		err = tb.hset(tx)
+
+	}
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx)
+	return err
+
 }

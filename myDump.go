@@ -6,15 +6,16 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/bendersilver/jlog"
 	"golang.org/x/sync/errgroup"
 )
 
 var reVals = regexp.MustCompile("^INSERT INTO `(.+?)` VALUES \\((.+)\\);$")
 
-func (s *Stream) Dump(table []string) error {
-	if len(table) == 0 {
+func (s *Stream) Dump(tables []string) error {
+	if len(tables) == 0 {
 		return fmt.Errorf("table empty")
 	}
 	args := []string{
@@ -32,7 +33,7 @@ func (s *Stream) Dump(table []string) error {
 		"--skip-tz-utc",
 		s.conf.Database,
 	}
-	cmd := exec.Command("/usr/bin/mysqldump", append(args, table...)...)
+	cmd := exec.Command("/usr/bin/mysqldump", append(args, tables...)...)
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -59,26 +60,21 @@ func (s *Stream) Dump(table []string) error {
 	})
 	g.Go(func() error {
 		scanner := bufio.NewScanner(stdout)
-		var tx redis.Pipeliner
+		var item dbItem
+		item.method = "SET"
 		for scanner.Scan() {
 			m := scanner.Text()
 			if m := reVals.FindAllStringSubmatch(m, -1); len(m) == 1 {
-				table := m[0][1]
-				vals, err := parseValues(m[0][2])
+				jlog.Debug(m)
+				item.table = m[0][1]
+				item.vals, err = parseValues(m[0][2])
 				if err != nil {
 					return err
 				}
-				tx = s.rdb.Pipeline()
-				err = s.tables[table].hset(tx, vals)
-				if err != nil {
-					return err
-				}
-				_, err = tx.Exec(ctx)
-				if err != nil {
-					return err
-				}
+				item.set()
 			}
 		}
+		time.Sleep(time.Second * 5)
 		return nil
 	})
 	cmd.Wait()

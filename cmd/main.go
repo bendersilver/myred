@@ -17,6 +17,17 @@ func (c *Conf) IndexFields() [][]string {
 	return nil
 }
 
+type Tmp struct {
+	Name string `redis:"name"`
+	Val  string `redis:"val"`
+}
+
+func (t *Tmp) IndexFields() [][]string {
+	return [][]string{
+		{"val"},
+	}
+}
+
 func main() {
 
 	s, err := myred.NewStream(&myred.Config{
@@ -25,15 +36,16 @@ func main() {
 			Addr:    "/tmp/rdb.sock",
 			DB:      0,
 		}),
-		Database: os.Getenv("database"),
+		Database: os.Getenv("DATABASE"),
 		Socket:   "/tmp/my.sock",
-		Password: os.Getenv("password"),
-		User:     os.Getenv("user"),
+		Password: os.Getenv("PASSWORD"),
+		User:     os.Getenv("USER"),
 	})
 	if err != nil {
 		jlog.Fatal(err)
 	}
 	s.AddTable("conf", new(Conf))
+	s.AddTable("_conf", new(Conf))
 	// binlog.Dump()
 	err = s.Run()
 	if err != nil {
