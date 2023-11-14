@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bendersilver/jlog"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
 )
@@ -28,22 +27,7 @@ type table struct {
 	Name    string
 	Include map[string]bool
 	Columns []Column
-	oldVals []string
-	newVals []string
-	method  string
 	t       MyRdbIfce
-}
-
-func (t *table) check() bool {
-	switch t.method {
-	case "UPDATE":
-		return len(t.oldVals) == len(t.Columns) && len(t.newVals) == len(t.Columns)
-	case "DELETE":
-		return len(t.oldVals) == len(t.Columns)
-	case "INSERT":
-		return len(t.newVals) == len(t.Columns)
-	}
-	return false
 }
 
 func (t *table) getKey(vals []string) string {
@@ -81,48 +65,51 @@ func (t *table) manageIX(rdb redis.Pipeliner, key string, m map[string]string, d
 	return nil
 }
 
-func (t *table) update(rdb redis.Pipeliner) (err error) {
-	err = t.del(rdb)
-	if err != nil {
-		return err
-	}
-	return t.hset(rdb)
-}
+func (t *table) set(rdb redis.Pipeliner, vals ...string) error {
+	t.Lock()
+	defer t.Unlock()
 
-func (t *table) hset(rdb redis.Pipeliner) error {
 	var args = make(map[string]string)
-	for i := 0; i < len(t.newVals); i++ {
-		if t.Columns[i].dummy || t.newVals[i] == "" {
+	for i := 0; i < len(vals); i++ {
+		if t.Columns[i].dummy || vals[i] == "" {
 			continue
 		}
-		args[t.Columns[i].Name] = t.newVals[i]
+		args[t.Columns[i].Name] = vals[i]
 	}
-	var key = t.getKey(t.newVals)
+	var key = t.getKey(vals)
 	err := rdb.HSet(ctx, key, args).Err()
 	if err != nil {
 		return err
 	}
-	return t.manageIX(rdb, key, args, false)
+	err = t.manageIX(rdb, key, args, false)
+	if err != nil {
+		return err
+	}
+	return t.t.AfterSet(rdb, key, args)
 }
 
-func (t *table) del(rdb redis.Pipeliner) error {
-	var key = t.getKey(t.oldVals)
-	err := rdb.Del(ctx, t.getKey(t.oldVals)).Err()
+func (t *table) del(rdb redis.Pipeliner, vals ...string) error {
+	t.Lock()
+	defer t.Unlock()
+
+	var key = t.getKey(vals)
+	err := rdb.Del(ctx, key).Err()
 	if err != nil {
 		return err
 	}
 	var args = make(map[string]string)
-	for i := 0; i < len(t.oldVals); i++ {
-		if t.Columns[i].dummy || t.oldVals[i] == "" {
+	for i := 0; i < len(vals); i++ {
+		if t.Columns[i].dummy || vals[i] == "" {
 			continue
 		}
-		args[t.Columns[i].Name] = t.oldVals[i]
+		args[t.Columns[i].Name] = vals[i]
 	}
 	return t.manageIX(rdb, key, args, true)
 }
 
 type MyRdbIfce interface {
 	IndexFields() [][]string
+	AfterSet(redis.Pipeliner, string, map[string]string) error
 }
 
 type Config struct {
@@ -173,6 +160,7 @@ func (s *Stream) AddTable(name string, t MyRdbIfce) error {
 		}
 		s.tables[name].Include[fName] = true
 	}
+
 	rows, err := s.conn.Query(`
 			SELECT  column_name, ordinal_position, column_key = 'PRI'
 			FROM information_schema.columns
@@ -183,7 +171,6 @@ func (s *Stream) AddTable(name string, t MyRdbIfce) error {
 	if err != nil {
 		return fmt.Errorf("query information_schema.columns err: %v", err)
 	}
-
 	defer rows.Close()
 	for rows.Next() {
 		var line Column
@@ -194,12 +181,10 @@ func (s *Stream) AddTable(name string, t MyRdbIfce) error {
 		line.dummy = !s.tables[name].Include[line.Name]
 		s.tables[name].Columns = append(s.tables[name].Columns, line)
 	}
-	jlog.Debug(s.tables[name])
 	return rows.Err()
 }
 
 func NewStream(c *Config) (*Stream, error) {
-	// check  mysqlbinlog app
 	var s Stream
 	s.conf = c
 	if c.Rdb == nil {

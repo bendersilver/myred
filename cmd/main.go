@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 
 	"github.com/bendersilver/jlog"
@@ -17,6 +19,10 @@ func (c *Conf) IndexFields() [][]string {
 	return nil
 }
 
+func (*Conf) AfterSet(redis.Pipeliner, string, map[string]string) error {
+	return nil
+}
+
 type Tmp struct {
 	Name string `redis:"name"`
 	Val  string `redis:"val"`
@@ -26,6 +32,23 @@ func (t *Tmp) IndexFields() [][]string {
 	return [][]string{
 		{"val"},
 	}
+}
+func (*Tmp) AfterSet(redis.Pipeliner, string, map[string]string) error {
+	return nil
+}
+
+type Queue struct {
+	ID   string          `redis:"id"`
+	Val  string          `redis:"chan_name"`
+	Body json.RawMessage `redis:"body"`
+}
+
+func (q *Queue) IndexFields() [][]string {
+	return nil
+}
+
+func (*Queue) AfterSet(rp redis.Pipeliner, key string, data map[string]string) error {
+	return rp.Publish(context.Background(), data["chan_name"], 1).Err()
 }
 
 func main() {
@@ -45,8 +68,8 @@ func main() {
 		jlog.Fatal(err)
 	}
 	s.AddTable("conf", new(Conf))
-	s.AddTable("_conf", new(Conf))
-	// binlog.Dump()
+	s.AddTable("_tmp", new(Tmp))
+	s.AddTable("queue", new(Queue))
 	err = s.Run()
 	if err != nil {
 		jlog.Crit(err)
