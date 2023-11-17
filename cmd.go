@@ -7,21 +7,21 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func cmd(bin string, args []string, errWrapper, fnWrapper func(string) error) error {
+func cmd(bin string, args []string, errWrapper, fnWrapper func(string) error) (*exec.Cmd, error) {
 	bin, err := exec.LookPath(bin)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cmd := exec.Command(bin, args...)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer stderr.Close()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer stdout.Close()
 	cmd.Start()
@@ -48,5 +48,5 @@ func cmd(bin string, args []string, errWrapper, fnWrapper func(string) error) er
 		return nil
 	})
 	g.Go(cmd.Wait)
-	return g.Wait()
+	return cmd, g.Wait()
 }

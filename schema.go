@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os/exec"
 	"reflect"
 	"strings"
 	"sync"
@@ -126,6 +127,7 @@ type Stream struct {
 	rdb    *redis.Client
 	sub    *redis.PubSub
 	tables map[string]*table
+	cmd    *exec.Cmd
 	pos    struct {
 		Name string `redis:"name"`
 		Pos  uint64 `redis:"pos"`

@@ -8,7 +8,7 @@ import (
 	"github.com/bendersilver/jlog"
 )
 
-func (s *Stream) Dump(tables []string) error {
+func (s *Stream) Dump(tables []string) (err error) {
 	if len(tables) == 0 {
 		return fmt.Errorf("table empty")
 	}
@@ -31,7 +31,7 @@ func (s *Stream) Dump(tables []string) error {
 
 	var item dbItem
 	item.method = "SET"
-	return cmd("mysqldump",
+	s.cmd, err = cmd("mysqldump",
 		append(args, tables...),
 		dumpErrWrapper,
 		func(line string) (err error) {
@@ -45,6 +45,7 @@ func (s *Stream) Dump(tables []string) error {
 			}
 			return nil
 		})
+	return
 }
 
 func dumpErrWrapper(line string) (err error) {
