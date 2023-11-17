@@ -125,7 +125,6 @@ type Stream struct {
 	conf   *Config
 	conn   *sql.DB
 	rdb    *redis.Client
-	sub    *redis.PubSub
 	tables map[string]*table
 	cmd    *exec.Cmd
 	pos    struct {

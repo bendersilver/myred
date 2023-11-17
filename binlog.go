@@ -5,17 +5,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/bendersilver/jlog"
 )
 
 func (s *Stream) Run() (err error) {
-	// s.sub = s.rdb.Subscribe(ctx, "rdbStream")
-	// go func() {
-	// 	for msg := range s.sub.Channel() {
-	// 		jlog.Notice(msg)
-	// 	}
-	// }()
 	if s.pos.Pos == 0 {
 		err = s.initial()
 		if err != nil {
@@ -58,7 +50,6 @@ func (s *Stream) run() (err error) {
 	return s.cmdRun("mysqlbinlog", args,
 		binErrWrapper,
 		func(line string) (err error) {
-			jlog.Debug(line)
 			args = reAt.FindStringSubmatch(line)
 			if len(args) == 2 { // execute
 				err = item.set(s)
