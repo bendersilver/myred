@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/bendersilver/jlog"
 )
 
 func (s *Stream) Run() (err error) {
@@ -24,8 +26,8 @@ func (s *Stream) Run() (err error) {
 }
 
 func (s *Stream) Close() error {
-	if s.cmdCancel != nil {
-		s.cmdCancel()
+	if s.cmd != nil {
+		s.cmd.Process.Kill()
 	}
 	s.conn.Close()
 	return nil
@@ -53,9 +55,10 @@ func (s *Stream) run() (err error) {
 	reTable := regexp.MustCompile("^### ([A-Z]+)[A-Z ]+`.+`.`(.+)`$")
 	reVal := regexp.MustCompile(`^###   @\d+=(.*)`)
 	var item dbItem
-	s.cmdCancel, err = cmd("mysqlbinlog", args,
+	return s.cmdRun("mysqlbinlog", args,
 		binErrWrapper,
 		func(line string) (err error) {
+			jlog.Debug(line)
 			args = reAt.FindStringSubmatch(line)
 			if len(args) == 2 { // execute
 				err = item.set(s)
@@ -101,7 +104,6 @@ func (s *Stream) run() (err error) {
 			}
 			return nil
 		})
-	return
 }
 
 func binErrWrapper(line string) (err error) {

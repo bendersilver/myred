@@ -79,7 +79,7 @@ func main() {
 	)
 	go func() {
 		<-signalChan
-		// err = s.Close()
+		err = s.Close()
 		if err != nil {
 			jlog.Crit(err)
 		}

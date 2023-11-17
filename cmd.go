@@ -2,31 +2,29 @@ package myred
 
 import (
 	"bufio"
-	"context"
 	"os/exec"
 
 	"golang.org/x/sync/errgroup"
 )
 
-func cmd(bin string, args []string, errWrapper, fnWrapper func(string) error) (context.CancelFunc, error) {
+func (s *Stream) cmdRun(bin string, args []string, errWrapper, fnWrapper func(string) error) error {
 	bin, err := exec.LookPath(bin)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, bin, args...)
-	stderr, err := cmd.StderrPipe()
+	s.cmd = exec.Command(bin, args...)
+	stderr, err := s.cmd.StderrPipe()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer stderr.Close()
 
-	stdout, err := cmd.StdoutPipe()
+	stdout, err := s.cmd.StdoutPipe()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer stdout.Close()
-	cmd.Start()
+	s.cmd.Start()
 
 	g := new(errgroup.Group)
 	g.Go(func() (err error) {
@@ -49,6 +47,6 @@ func cmd(bin string, args []string, errWrapper, fnWrapper func(string) error) (c
 		}
 		return nil
 	})
-	g.Go(cmd.Wait)
-	return cancel, g.Wait()
+	g.Go(s.cmd.Wait)
+	return g.Wait()
 }
