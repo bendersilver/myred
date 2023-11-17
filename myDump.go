@@ -31,7 +31,7 @@ func (s *Stream) Dump(tables []string) (err error) {
 
 	var item dbItem
 	item.method = "SET"
-	s.cmd, err = cmd("mysqldump",
+	s.cmdCancel, err = cmd("mysqldump",
 		append(args, tables...),
 		dumpErrWrapper,
 		func(line string) (err error) {

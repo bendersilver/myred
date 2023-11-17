@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/bendersilver/jlog"
 	"github.com/bendersilver/myred"
@@ -67,6 +69,21 @@ func main() {
 	if err != nil {
 		jlog.Fatal(err)
 	}
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(
+		signalChan,
+		syscall.SIGHUP,  // kill -SIGHUP XXXX
+		syscall.SIGINT,  // kill -SIGINT XXXX or Ctrl+c
+		syscall.SIGQUIT, // kill -SIGQUIT XXXX
+		syscall.SIGTERM,
+	)
+	go func() {
+		<-signalChan
+		// err = s.Close()
+		if err != nil {
+			jlog.Crit(err)
+		}
+	}()
 	s.AddTable("conf", new(Conf))
 	s.AddTable("_tmp", new(Tmp))
 	s.AddTable("queue", new(Queue))

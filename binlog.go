@@ -24,9 +24,8 @@ func (s *Stream) Run() (err error) {
 }
 
 func (s *Stream) Close() error {
-	// s.sub.Close()
-	if s.cmd != nil {
-		s.cmd.Cancel()
+	if s.cmdCancel != nil {
+		s.cmdCancel()
 	}
 	s.conn.Close()
 	return nil
@@ -54,7 +53,7 @@ func (s *Stream) run() (err error) {
 	reTable := regexp.MustCompile("^### ([A-Z]+)[A-Z ]+`.+`.`(.+)`$")
 	reVal := regexp.MustCompile(`^###   @\d+=(.*)`)
 	var item dbItem
-	s.cmd, err = cmd("mysqlbinlog", args,
+	s.cmdCancel, err = cmd("mysqlbinlog", args,
 		binErrWrapper,
 		func(line string) (err error) {
 			args = reAt.FindStringSubmatch(line)
